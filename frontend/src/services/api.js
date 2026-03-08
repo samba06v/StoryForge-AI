@@ -7,7 +7,7 @@ const getClient = () => {
   
   return axios.create({
     baseURL,
-    timeout: 120000, // 2 min for AI generation
+    timeout: 120000,
     headers: getAuthHeaders(),
   })
 }
@@ -52,7 +52,7 @@ export const getS3UploadUrl = async (filename, contentType) => {
     filename,
     content_type: contentType,
   })
-  return response.data // { upload_url, s3_key }
+  return response.data
 }
 
 export const uploadFileToS3 = async (file, onProgress) => {
@@ -80,7 +80,7 @@ export const generateComic = async (payload) => {
     character_description: payload.characterDescription || '',
     frames: payload.frames || 10,
   })
-  return response.data // { frames: [{ image_url, caption, panel_number }] }
+  return response.data
 }
 
 export const generateMeme = async (payload) => {
@@ -92,7 +92,7 @@ export const generateMeme = async (payload) => {
     brand_persona: payload.brandPersona || 'GenZ',
     count: payload.count || 3,
   })
-  return response.data // { memes: [{ image_url, top_text, bottom_text }] }
+  return response.data
 }
 
 export const generateInfographic = async (payload) => {
@@ -101,11 +101,11 @@ export const generateInfographic = async (payload) => {
     data_points: payload.dataPoints,
     key_themes: payload.keyThemes,
     sentiment: payload.sentiment || 'professional',
-    word_limit: payload.wordLimit || 200,
+    word_limit: payload.wordLimit || 500,
     dimensions: payload.dimensions || '1080x1080',
     platform: payload.platform || 'linkedin',
   })
-  return response.data // { image_url, data }
+  return response.data
 }
 
 // ─── Schedule / Distribution ──────────────────────────────────
@@ -113,7 +113,7 @@ export const generateInfographic = async (payload) => {
 export const getScheduleSuggestions = async (assets) => {
   const client = getClient()
   const response = await client.post('/schedule/suggest', { assets })
-  return response.data // { schedule: [{ date, time, platform, asset_id, reason }] }
+  return response.data
 }
 
 export const schedulePost = async (scheduleItem) => {
@@ -150,30 +150,54 @@ export const healthCheck = async () => {
 }
 
 // ─── Dynamic mock generators for demo/offline mode ────────────────
-// These produce context-aware output based on the user's actual input
-// instead of returning hardcoded generic data.
 
 /**
  * Extract a readable title/topic from a URL or raw text.
+ * Ignores filenames like "Instruction.pdf" and uses actual content instead.
  */
 function _extractTopicFromInput(source = '', rawText = '') {
-  // Try to get topic from URL path segments
-  if (source.startsWith('http')) {
+  // If source is a filename (not a URL), skip it and use rawText
+  const isFilename = /^[^/\\]+\.(pdf|docx?|txt|pptx?|csv)$/i.test(source)
+
+  if (!isFilename && source.startsWith('http')) {
     try {
       const url = new URL(source)
       const segments = url.pathname.split('/').filter(Boolean)
       const last = segments[segments.length - 1] || url.hostname
-      // Clean slug: replace hyphens/underscores with spaces, strip extensions
-      const slug = last.replace(/\.(html?|php|aspx?)$/i, '').replace(/[-_]/g, ' ')
-      if (slug.length > 3) return slug
-      // Fallback: hostname without www/tld
+      const slug = last
+        .replace(/\.(html?|php|aspx?|pdf)$/i, '')
+        .replace(/[-_]/g, ' ')
+        .trim()
+      if (slug.length > 3 && !/^\d+$/.test(slug)) return slug
       return url.hostname.replace(/^www\./i, '').split('.')[0]
     } catch {}
   }
-  // Fallback: extract first noun-like phrase from text
-  const words = rawText.trim().split(/\s+/).slice(0, 30)
-  const significant = words.filter(w => w.length > 4 && /^[A-Z]/.test(w))
-  return significant.slice(0, 2).join(' ') || source || 'your content'
+
+  // Extract topic from actual text content
+  const stopWords = new Set([
+    'the','a','an','and','or','but','in','on','at','to','for','of','with',
+    'is','was','are','were','be','been','being','have','has','had','do',
+    'does','did','will','would','could','should','may','might','this','that',
+    'these','those','it','its','from','by','as','we','our','your','their',
+    'about','which','when','who','how','what','also','into','more','than',
+    'other','some','such','after','before','between','through','during',
+  ])
+  const wordFreqs = {}
+  rawText
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, '')
+    .split(/\s+/)
+    .forEach(w => {
+      if (w.length > 4 && !stopWords.has(w)) {
+        wordFreqs[w] = (wordFreqs[w] || 0) + 1
+      }
+    })
+  const top = Object.entries(wordFreqs)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 2)
+    .map(([w]) => w)
+
+  return top.join(' ') || 'content insights'
 }
 
 /**
@@ -183,29 +207,51 @@ export function generateMockAnalysis(source = '', rawText = '', audience = [], t
   const topic = _extractTopicFromInput(source, rawText)
   const topicTitle = topic.charAt(0).toUpperCase() + topic.slice(1)
 
-  // Extract simple word frequencies from raw text to derive pseudo-themes
-  const stopWords = new Set(['the','a','an','and','or','but','in','on','at','to','for','of','with','is','was','are','were','be','been','being','have','has','had','do','does','did','will','would','could','should','may','might','this','that','these','those','it','its'])
+  const stopWords = new Set([
+    'the','a','an','and','or','but','in','on','at','to','for','of','with',
+    'is','was','are','were','be','been','being','have','has','had','do',
+    'does','did','will','would','could','should','may','might','this','that',
+    'these','those','it','its',
+  ])
   const wordFreqs = {}
-  rawText.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/).forEach(w => {
-    if (w.length > 4 && !stopWords.has(w)) wordFreqs[w] = (wordFreqs[w] || 0) + 1
-  })
-  const topWords = Object.entries(wordFreqs).sort(([,a],[,b]) => b - a).slice(0, 12).map(([w]) => w)
+  rawText
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, '')
+    .split(/\s+/)
+    .forEach(w => {
+      if (w.length > 4 && !stopWords.has(w)) wordFreqs[w] = (wordFreqs[w] || 0) + 1
+    })
+  const topWords = Object.entries(wordFreqs)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 12)
+    .map(([w]) => w)
 
-  // Build themes from top words or fallback to topic-based ones
-  const themes = topWords.length >= 4
-    ? topWords.slice(0, 4).map(w => w.charAt(0).toUpperCase() + w.slice(1))
-    : [`${topicTitle} Overview`, `Key Insights`, `Impact & Trends`, `Future Outlook`]
+  const themes =
+    topWords.length >= 4
+      ? topWords.slice(0, 4).map(w => w.charAt(0).toUpperCase() + w.slice(1))
+      : [
+          `${topicTitle} Overview`,
+          'Key Insights',
+          'Impact & Trends',
+          'Future Outlook',
+        ]
 
-  const sentences = rawText.split(/[.!?]+/).map(s => s.trim()).filter(s => s.length > 40)
-  const quotables = sentences.length >= 3
-    ? sentences.slice(0, 3).map(s => s.slice(0, 120) + (s.length > 120 ? '...' : ''))
-    : [
-        `Understanding ${topicTitle} is essential for staying ahead in today's landscape.`,
-        `The core principles of ${topicTitle} have far-reaching implications.`,
-        `Experts agree: ${topicTitle} is reshaping the way we think about the future.`,
-      ]
+  const sentences = rawText
+    .split(/[.!?]+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 40)
 
-  // Attempt to find number-like statistics in the raw text
+  const quotables =
+    sentences.length >= 3
+      ? sentences.slice(0, 5).map(s => s.slice(0, 150) + (s.length > 150 ? '...' : ''))
+      : [
+          `Understanding ${topicTitle} is essential for staying ahead in today's landscape.`,
+          `The core principles of ${topicTitle} have far-reaching implications across industries.`,
+          `Experts agree: ${topicTitle} is reshaping the way we think about the future.`,
+          `The impact of ${topicTitle} continues to grow as adoption accelerates globally.`,
+          `Organizations that embrace ${topicTitle} early gain a significant competitive advantage.`,
+        ]
+
   const stats = []
   const numRegex = /(\d[\d,]*\.?\d*)\s*(%|percent|x|times|million|billion|k\b)/gi
   let match
@@ -221,19 +267,20 @@ export function generateMockAnalysis(source = '', rawText = '', audience = [], t
     )
   }
 
-  const summary = sentences.length > 0
-    ? sentences.slice(0, 2).join('. ') + '.'
-    : `This content covers the key aspects of ${topicTitle}, exploring its impact, trends, and future implications for ${audience.join(', ') || 'a broad audience'}.`
+  const summary =
+    sentences.length > 0
+      ? sentences.slice(0, 3).join('. ') + '.'
+      : `This content covers the key aspects of ${topicTitle}, exploring its impact, trends, and future implications for ${audience.join(', ') || 'a broad audience'}.`
 
-  const isHumorous = tone.includes('Humorous') || tone.includes('Sarcastic') || tone.includes('Casual')
-  const humor_score = isHumorous ? 0.72 : 0.28
+  const isHumorous =
+    tone.includes('Humorous') || tone.includes('Sarcastic') || tone.includes('Casual')
 
   return {
     key_themes: themes,
     quotable_moments: quotables,
     statistics: stats.slice(0, 3),
     sentiment: 0.68,
-    humor_score,
+    humor_score: isHumorous ? 0.72 : 0.28,
     summary,
     core_conflict: `The challenge of understanding and applying ${topicTitle} in a rapidly changing world.`,
     target_emotion: isHumorous ? 'amusement' : 'curiosity',
@@ -243,34 +290,64 @@ export function generateMockAnalysis(source = '', rawText = '', audience = [], t
 }
 
 /**
- * Generate comic frames that reference the actual analysis themes.
+ * Curated picsum photo IDs grouped by visual mood.
+ * These IDs are verified to work reliably with picsum.photos/id/{id}/WxH
+ */
+const PICSUM_SETS = {
+  discovery: [15, 42, 67, 119, 137, 160, 180, 210],
+  research:  [20, 48, 96, 110, 145, 170, 195, 220],
+  challenge: [25, 55, 88, 125, 150, 175, 200, 230],
+  success:   [30, 60, 100, 130, 155, 185, 215, 240],
+  action:    [35, 65, 105, 135, 162, 190, 218, 245],
+  team:      [38, 70, 108, 140, 165, 193, 222, 250],
+  journey:   [40, 75, 112, 143, 168, 196, 225, 255],
+  clarity:   [44, 80, 115, 147, 172, 199, 228, 260],
+}
+
+const PANEL_MOODS = [
+  'discovery', 'challenge', 'research', 'success',
+  'action', 'team', 'challenge', 'success',
+  'team', 'journey', 'action', 'clarity',
+]
+
+const MEME_MOODS = ['discovery', 'challenge', 'success', 'clarity', 'action']
+
+function _getPicsumId(theme = '', moodKey = 'discovery', index = 0) {
+  const set = PICSUM_SETS[moodKey] || PICSUM_SETS.discovery
+  const themeHash = theme.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
+  return set[(themeHash + index) % set.length]
+}
+
+/**
+ * Generate comic frames with working images and topic-relevant captions.
  */
 export function generateMockComicFrames(analysis, count = 4) {
   const themes = analysis?.key_themes || ['the topic', 'key ideas', 'insights', 'the conclusion']
-  const storyline = analysis?.comic_storyline || ''
   const quotes = analysis?.quotable_moments || []
+  const topic = themes[0] || 'this topic'
 
   const frameTemplates = [
-    { caption: `Our hero discovers ${themes[0] || 'something incredible'}...`, dialogue: quotes[0]?.slice(0, 80) || 'Wait — this changes everything!' },
-    { caption: `The challenge of ${themes[1] || 'understanding'} becomes clear`, dialogue: 'How do we even begin to tackle this?' },
-    { caption: `Diving deep into ${themes[2] || 'the details'}`, dialogue: quotes[1]?.slice(0, 80) || 'The data doesn\'t lie.' },
-    { caption: `A breakthrough moment with ${themes[3] || 'the final insight'}`, dialogue: null },
-    { caption: `Applying ${themes[0] || 'the lesson'} in the real world`, dialogue: 'This is actually simpler than I thought!' },
-    { caption: `The community rallies around ${themes[1] || 'the idea'}`, dialogue: 'Together we can make this work.' },
-    { caption: `Obstacles arise — but ${themes[2] || 'perseverance'} wins`, dialogue: quotes[2]?.slice(0, 80) || 'Never give up.' },
-    { caption: `The transformation is complete`, dialogue: '✨ Mission accomplished!' },
-    { caption: `Sharing the knowledge with others`, dialogue: 'You need to hear this.' },
-    { caption: `The journey continues...`, dialogue: null },
-    { caption: `New horizons with ${themes[0] || 'fresh ideas'}`, dialogue: 'What comes next?' },
-    { caption: `The final revelation`, dialogue: 'This was the key all along.' },
+    { caption: `Our hero first encounters ${topic}...`,                                   dialogue: quotes[0]?.slice(0, 80) || 'Wait — this changes everything!' },
+    { caption: `The challenge of ${themes[1] || 'understanding'} becomes clear`,          dialogue: 'How do we even begin to tackle this?' },
+    { caption: `Diving deep into ${themes[2] || 'the details'}`,                          dialogue: quotes[1]?.slice(0, 80) || "The data doesn't lie." },
+    { caption: `A breakthrough moment with ${themes[3 % themes.length] || 'insight'}`,    dialogue: '💡 Now it all makes sense!' },
+    { caption: `Applying ${topic} in the real world`,                                      dialogue: 'This is actually simpler than I thought!' },
+    { caption: `The community rallies around ${themes[1 % themes.length] || 'the idea'}`, dialogue: 'Together we can make this work.' },
+    { caption: `Obstacles arise — but ${themes[2 % themes.length] || 'perseverance'} wins`, dialogue: quotes[2]?.slice(0, 80) || 'Never give up.' },
+    { caption: `The transformation is complete`,                                            dialogue: '✨ Mission accomplished!' },
+    { caption: `Sharing the knowledge of ${topic} with others`,                            dialogue: 'You need to hear this.' },
+    { caption: `The journey with ${topic} continues...`,                                   dialogue: quotes[3]?.slice(0, 80) || 'More to explore ahead.' },
+    { caption: `New horizons — ${themes[0] || 'fresh ideas'} await`,                      dialogue: 'What comes next?' },
+    { caption: `The final revelation about ${topic}`,                                      dialogue: 'This was the key all along.' },
   ]
 
   return Array.from({ length: Math.min(count, 12) }, (_, i) => {
     const tpl = frameTemplates[i % frameTemplates.length]
-    const seed = `ctx${i}${(themes[0] || 'x').slice(0, 4)}`
+    const moodKey = PANEL_MOODS[i % PANEL_MOODS.length]
+    const picsumId = _getPicsumId(themes[0], moodKey, i)
     return {
       panel_number: i + 1,
-      image_url: `https://source.unsplash.com/300x300/?${encodeURIComponent((themes[0]||'technology').toLowerCase().replace(/[^a-z0-9\s]/g,'').trim().replace(/\s+/g,'-'))},${['discovery','challenge','research','breakthrough','work','teamwork','struggle','success'][i%8]}&sig=${i}`,
+      image_url: `https://picsum.photos/id/${picsumId}/300/300`,
       caption: tpl.caption,
       dialogue: tpl.dialogue,
     }
@@ -278,13 +355,11 @@ export function generateMockComicFrames(analysis, count = 4) {
 }
 
 /**
- * Generate memes based on the actual analysis content.
+ * Generate memes with working images and topic-relevant text.
  */
 export function generateMockMemes(analysis, count = 3) {
   const themes = analysis?.key_themes || ['the topic']
   const quotes = analysis?.quotable_moments || []
-  const meme_potential = analysis?.meme_potential || `the irony of ${themes[0]}`
-  const core_conflict = analysis?.core_conflict || `understanding ${themes[0]}`
 
   const templates = [
     {
@@ -296,7 +371,9 @@ export function generateMockMemes(analysis, count = 3) {
       bottom_text: `AFTER READING ABOUT IT`,
     },
     {
-      top_text: quotes[0] ? `"${quotes[0].slice(0, 50).toUpperCase()}"` : `THE STRUGGLE WITH ${(themes[0] || 'IT').toUpperCase()} IS REAL`,
+      top_text: quotes[0]
+        ? `"${quotes[0].slice(0, 50).toUpperCase()}"`
+        : `THE STRUGGLE WITH ${(themes[0] || 'IT').toUpperCase()} IS REAL`,
       bottom_text: `— EVERYONE IN THIS FIELD`,
     },
     {
@@ -305,16 +382,19 @@ export function generateMockMemes(analysis, count = 3) {
     },
     {
       top_text: `${(themes[0] || 'IT').toUpperCase()} EXPERTS BE LIKE`,
-      bottom_text: quotes[1] ? `"${quotes[1].slice(0, 50).toUpperCase()}"` : `"IT'S ACTUALLY QUITE SIMPLE"`,
+      bottom_text: quotes[1]
+        ? `"${quotes[1].slice(0, 50).toUpperCase()}"`
+        : `"IT'S ACTUALLY QUITE SIMPLE"`,
     },
   ]
 
   return Array.from({ length: Math.min(count, 5) }, (_, i) => {
     const tpl = templates[i % templates.length]
-    const seed = `meme${i}${(themes[0] || 'x').slice(0, 4)}`
+    const moodKey = MEME_MOODS[i % MEME_MOODS.length]
+    const picsumId = _getPicsumId(themes[0], moodKey, i + 50)
     return {
       id: i + 1,
-      image_url: `https://source.unsplash.com/400x400/?${encodeURIComponent((themes[0]||'technology').toLowerCase().replace(/[^a-z0-9\s]/g,'').trim().replace(/\s+/g,'-'))},reaction&sig=${i+100}`,
+      image_url: `https://picsum.photos/id/${picsumId}/400/400`,
       top_text: tpl.top_text,
       bottom_text: tpl.bottom_text,
     }
@@ -322,40 +402,68 @@ export function generateMockMemes(analysis, count = 3) {
 }
 
 /**
- * Generate an infographic/LinkedIn post from the actual analysis.
+ * Generate a rich infographic / LinkedIn post with expanded word limit.
  */
-export function generateMockInfographic(analysis) {
+export function generateMockInfographic(analysis, wordLimit = 500) {
   const themes = analysis?.key_themes || ['Key Topic']
   const quotes = analysis?.quotable_moments || []
   const stats = analysis?.statistics || []
   const summary = analysis?.summary || ''
   const topicTitle = themes[0] || 'Key Insights'
 
-  const hook = `🔑 ${quotes[0]?.slice(0, 100) || `Everything you need to know about ${topicTitle}`}`
+  const hook = `🔑 ${quotes[0]?.slice(0, 150) || `Everything you need to know about ${topicTitle}`}`
   const title = `${topicTitle}: Key Insights & Takeaways`
 
-  const bullets = themes.map((t, i) => {
-    const stat = stats[i]
-    return stat
-      ? `• **${t}** — ${stat.value} ${stat.label}`
-      : `• **${t}** — A critical factor worth exploring`
-  }).join('\n')
+  // Rich bullets — each theme gets a stat and a supporting quote if available
+  const bullets = themes
+    .map((t, i) => {
+      const stat = stats[i]
+      const quote = quotes[i + 1]
+      let line = stat
+        ? `• **${t}** — ${stat.value} ${stat.label}.`
+        : `• **${t}** — A critical factor reshaping how we think and operate today.`
+      if (quote) line += ` "${quote.slice(0, 120)}"`
+      return line
+    })
+    .join('\n')
 
-  const body = `${summary ? summary + '\n\n' : ''}${bullets}`
+  // Additional insight paragraphs from remaining quotes
+  const extraInsights = quotes
+    .slice(themes.length + 1)
+    .map(q => `💡 ${q.slice(0, 200)}`)
+    .join('\n\n')
+
+  const fullBody = [
+    summary,
+    '',
+    '📌 Key Takeaways:',
+    bullets,
+    extraInsights ? '\n🔍 Deep Dive:' : '',
+    extraInsights,
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  // Trim to word limit
+  const words = fullBody.split(/\s+/)
+  const body =
+    words.slice(0, wordLimit).join(' ') + (words.length > wordLimit ? '...' : '')
 
   const hashtags = themes.map(t => `#${t.replace(/\s+/g, '')}`)
-  hashtags.push('#ContentMarketing', '#Insights', '#AI')
+  hashtags.push('#ContentMarketing', '#Insights', '#AI', '#LinkedIn')
+
+  const picsumId = _getPicsumId(topicTitle, 'clarity', 0)
 
   return {
-    image_url: `https://picsum.photos/seed/info${(themes[0] || 'x').slice(0, 4)}/1080/1080`,
+    image_url: `https://picsum.photos/id/${picsumId}/1080/1080`,
     content: {
       hook,
       title,
       body,
-      cta: `💬 What's your take? Drop your thoughts below!`,
-      hashtags: hashtags.slice(0, 6),
+      cta: `💬 What's your take on ${topicTitle}? Drop your thoughts below!`,
+      hashtags: hashtags.slice(0, 7),
     },
-    data: { title: topicTitle, sections: themes.length }
+    data: { title: topicTitle, sections: themes.length },
   }
 }
 
@@ -368,20 +476,61 @@ export function generateMockSchedule(generatedAssets = {}) {
   let id = 1
 
   if (generatedAssets.infographic) {
-    schedule.push({ id: id++, date: new Date(baseTime + 86400000).toISOString(), time: '09:00', platform: 'linkedin', type: 'infographic', reason: 'Monday morning — professional audiences peak on LinkedIn 9–11am' })
+    schedule.push({
+      id: id++,
+      date: new Date(baseTime + 86400000).toISOString(),
+      time: '09:00',
+      platform: 'linkedin',
+      type: 'infographic',
+      reason: 'Monday morning — professional audiences peak on LinkedIn 9–11am',
+    })
   }
   if (generatedAssets.comicFrames?.length > 0) {
-    schedule.push({ id: id++, date: new Date(baseTime + 86400000 * 2).toISOString(), time: '11:00', platform: 'twitter', type: 'comic', reason: 'Tuesday carousel — visual content drives 3x more engagement mid-morning' })
-    schedule.push({ id: id++, date: new Date(baseTime + 86400000 * 3).toISOString(), time: '18:00', platform: 'instagram', type: 'comic', reason: 'Wednesday evening — Instagram carousel gets peak reach after 6pm' })
+    schedule.push({
+      id: id++,
+      date: new Date(baseTime + 86400000 * 2).toISOString(),
+      time: '11:00',
+      platform: 'twitter',
+      type: 'comic',
+      reason: 'Tuesday carousel — visual content drives 3x more engagement mid-morning',
+    })
+    schedule.push({
+      id: id++,
+      date: new Date(baseTime + 86400000 * 3).toISOString(),
+      time: '18:00',
+      platform: 'instagram',
+      type: 'comic',
+      reason: 'Wednesday evening — Instagram carousel gets peak reach after 6pm',
+    })
   }
   if (generatedAssets.memes?.length > 0) {
-    schedule.push({ id: id++, date: new Date(baseTime + 86400000 * 4).toISOString(), time: '15:00', platform: 'twitter', type: 'meme', reason: 'Thursday afternoon — memes peak 3–5pm on Twitter/X' })
-    schedule.push({ id: id++, date: new Date(baseTime + 86400000 * 6).toISOString(), time: '10:00', platform: 'instagram', type: 'meme', reason: 'Saturday morning — casual scroll time, memes outperform all content types' })
+    schedule.push({
+      id: id++,
+      date: new Date(baseTime + 86400000 * 4).toISOString(),
+      time: '15:00',
+      platform: 'twitter',
+      type: 'meme',
+      reason: 'Thursday afternoon — memes peak 3–5pm on Twitter/X',
+    })
+    schedule.push({
+      id: id++,
+      date: new Date(baseTime + 86400000 * 6).toISOString(),
+      time: '10:00',
+      platform: 'instagram',
+      type: 'meme',
+      reason: 'Saturday morning — casual scroll time, memes outperform all content types',
+    })
   }
 
-  // Fallback if nothing generated
   if (schedule.length === 0) {
-    schedule.push({ id: 1, date: new Date(baseTime + 86400000).toISOString(), time: '09:00', platform: 'linkedin', type: 'infographic', reason: 'Default optimal posting time' })
+    schedule.push({
+      id: 1,
+      date: new Date(baseTime + 86400000).toISOString(),
+      time: '09:00',
+      platform: 'linkedin',
+      type: 'infographic',
+      reason: 'Default optimal posting time',
+    })
   }
 
   return schedule
